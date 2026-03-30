@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { normalizeScore } from '../lib/scoring';
 import { randomInt, lerp } from '../lib/utils';
+import { useProgressiveDifficulty } from '../hooks/useProgressiveDifficulty';
 import type { ExerciseProps } from './types';
 
 function getParams(difficulty: number) {
@@ -14,10 +15,11 @@ function generateDigits(length: number): number[] {
   return Array.from({ length }, () => randomInt(0, 9));
 }
 
-export function DigitSpan({ difficulty, onComplete, timeUp }: ExerciseProps) {
-  const { length, backward } = getParams(difficulty);
+export function DigitSpan({ difficulty, onComplete, timeUp, progressive }: ExerciseProps) {
+  const { level, onRoundEnd } = useProgressiveDifficulty(difficulty, progressive);
+  const params = getParams(level);
 
-  const [digits, setDigits] = useState(() => generateDigits(length));
+  const [digits, setDigits] = useState(() => generateDigits(params.length));
   const [phase, setPhase] = useState<'show' | 'input' | 'feedback'>('show');
   const [showIndex, setShowIndex] = useState(0);
   const [userInput, setUserInput] = useState<number[]>([]);
@@ -30,7 +32,6 @@ export function DigitSpan({ difficulty, onComplete, timeUp }: ExerciseProps) {
   const [startTime] = useState(Date.now());
   const completedRef = useRef(false);
 
-  // Show digits one at a time
   useEffect(() => {
     if (phase !== 'show') return;
     if (showIndex >= digits.length) {
@@ -41,23 +42,22 @@ export function DigitSpan({ difficulty, onComplete, timeUp }: ExerciseProps) {
     return () => clearTimeout(id);
   }, [phase, showIndex, digits.length]);
 
-  // Finalize when timeUp and not mid-input
   useEffect(() => {
     if (timeUp && !completedRef.current && phase !== 'input') {
       completedRef.current = true;
       const acc = totalAttempted > 0 ? totalCorrect / totalAttempted : 0;
       onComplete({
         exerciseId: 'digit-span',
-        difficulty,
+        difficulty: level,
         correct: totalCorrect,
         total: totalAttempted,
         accuracy: acc,
-        score: normalizeScore(totalCorrect, totalAttempted, difficulty),
+        score: normalizeScore(totalCorrect, totalAttempted, level),
         durationMs: Date.now() - startTime,
         rounds: round,
       });
     }
-  }, [timeUp, phase, totalCorrect, totalAttempted, round, difficulty, onComplete, startTime]);
+  }, [timeUp, phase, totalCorrect, totalAttempted, round, level, onComplete, startTime]);
 
   const addDigit = useCallback((d: number) => {
     setUserInput((prev) => [...prev, d]);
@@ -68,7 +68,7 @@ export function DigitSpan({ difficulty, onComplete, timeUp }: ExerciseProps) {
   }, []);
 
   const submit = useCallback(() => {
-    const target = backward ? [...digits].reverse() : digits;
+    const target = params.backward ? [...digits].reverse() : digits;
     let correct = 0;
     for (let i = 0; i < target.length; i++) {
       if (userInput[i] === target[i]) correct++;
@@ -80,32 +80,30 @@ export function DigitSpan({ difficulty, onComplete, timeUp }: ExerciseProps) {
     setLastWrong(!passed);
     setLastTarget(target);
     setLastUserAnswer([...userInput]);
+    onRoundEnd(passed);
     setPhase('feedback');
 
     setTimeout(() => {
       if (timeUp) return;
       setUserInput([]);
       setShowIndex(0);
-      if (passed) {
-        setDigits(generateDigits(length));
-        setRound((r) => r + 1);
-      } else {
-        // Retry: new digits, same length
-        setDigits(generateDigits(length));
-      }
+      const nextParams = getParams(progressive ? (passed ? Math.min(level + 1, 10) : Math.max(level - 1, 1)) : level);
+      setDigits(generateDigits(nextParams.length));
+      if (passed) setRound((r) => r + 1);
       setPhase('show');
     }, 1500);
-  }, [digits, userInput, backward, length, timeUp]);
+  }, [digits, userInput, params.backward, level, timeUp, onRoundEnd, progressive]);
 
   if (phase === 'show') {
     return (
       <div className="flex flex-col items-center justify-center gap-6 min-h-[40vh]">
         <div className="flex items-center gap-4 text-sm text-text-muted">
           <span>Round {round}</span>
+          {progressive && <span className="text-primary font-semibold">Lv {level}</span>}
           {lastWrong && <span className="text-warning">Retry!</span>}
         </div>
         <p className="text-text-muted text-sm">
-          Remember these digits{backward ? ' (enter backwards)' : ''}
+          Remember these digits{params.backward ? ' (enter backwards)' : ''}
         </p>
         <div className="text-7xl font-bold text-primary">
           {showIndex < digits.length ? digits[showIndex] : ''}
@@ -125,12 +123,7 @@ export function DigitSpan({ difficulty, onComplete, timeUp }: ExerciseProps) {
         </p>
         <div className="flex gap-2">
           {lastTarget.map((d, i) => (
-            <span
-              key={i}
-              className={`w-10 h-10 flex items-center justify-center rounded-lg font-bold ${
-                lastUserAnswer[i] === d ? 'bg-accent text-white' : 'bg-danger text-white'
-              }`}
-            >
+            <span key={i} className={`w-10 h-10 flex items-center justify-center rounded-lg font-bold ${lastUserAnswer[i] === d ? 'bg-accent text-white' : 'bg-danger text-white'}`}>
               {lastUserAnswer[i] ?? '–'}
             </span>
           ))}
@@ -149,50 +142,27 @@ export function DigitSpan({ difficulty, onComplete, timeUp }: ExerciseProps) {
       <div className="flex items-center gap-4 text-sm text-text-muted">
         <span>Round {round}</span>
         <span>{totalCorrect}/{totalAttempted} correct</span>
+        {progressive && <span className="text-primary font-semibold">Lv {level}</span>}
       </div>
       <p className="text-text-muted text-sm">
-        Enter digits {backward ? 'in reverse order' : 'in order'}
+        Enter digits {params.backward ? 'in reverse order' : 'in order'}
       </p>
-
       <div className="flex gap-2 min-h-[48px] items-center">
         {userInput.map((d, i) => (
-          <span key={i} className="w-10 h-10 bg-bg-card border border-border rounded-lg flex items-center justify-center font-bold">
-            {d}
-          </span>
+          <span key={i} className="w-10 h-10 bg-bg-card border border-border rounded-lg flex items-center justify-center font-bold">{d}</span>
         ))}
         {userInput.length < digits.length && (
           <span className="w-10 h-10 border-2 border-dashed border-text-muted/30 rounded-lg" />
         )}
       </div>
-
       <div className="grid grid-cols-5 gap-2">
         {[1, 2, 3, 4, 5, 6, 7, 8, 9, 0].map((d) => (
-          <button
-            key={d}
-            onClick={() => addDigit(d)}
-            disabled={userInput.length >= digits.length}
-            className="w-14 h-14 bg-bg-card border border-border rounded-xl text-xl font-bold active:scale-95 active:bg-primary/20 transition-all disabled:opacity-30"
-          >
-            {d}
-          </button>
+          <button key={d} onClick={() => addDigit(d)} disabled={userInput.length >= digits.length} className="w-14 h-14 bg-bg-card border border-border rounded-xl text-xl font-bold active:scale-95 active:bg-primary/20 transition-all disabled:opacity-30">{d}</button>
         ))}
       </div>
-
       <div className="flex gap-4">
-        <button
-          onClick={removeDigit}
-          disabled={userInput.length === 0}
-          className="px-6 py-3 rounded-xl bg-bg-card border border-border text-text-muted font-semibold disabled:opacity-30"
-        >
-          Delete
-        </button>
-        <button
-          onClick={submit}
-          disabled={userInput.length === 0}
-          className="px-8 py-3 rounded-xl bg-primary text-white font-bold active:scale-95 transition-transform disabled:opacity-30"
-        >
-          Submit
-        </button>
+        <button onClick={removeDigit} disabled={userInput.length === 0} className="px-6 py-3 rounded-xl bg-bg-card border border-border text-text-muted font-semibold disabled:opacity-30">Delete</button>
+        <button onClick={submit} disabled={userInput.length === 0} className="px-8 py-3 rounded-xl bg-primary text-white font-bold active:scale-95 transition-transform disabled:opacity-30">Submit</button>
       </div>
     </div>
   );

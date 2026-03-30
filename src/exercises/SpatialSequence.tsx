@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { normalizeScore } from '../lib/scoring';
 import { lerp, randomInt } from '../lib/utils';
+import { useProgressiveDifficulty } from '../hooks/useProgressiveDifficulty';
 import type { ExerciseProps } from './types';
 
 function getParams(difficulty: number) {
@@ -20,10 +21,11 @@ function generateSequence(len: number): number[] {
   return seq;
 }
 
-export function SpatialSequence({ difficulty, onComplete, timeUp }: ExerciseProps) {
-  const { sequenceLength } = getParams(difficulty);
+export function SpatialSequence({ difficulty, onComplete, timeUp, progressive }: ExerciseProps) {
+  const { level, onRoundEnd } = useProgressiveDifficulty(difficulty, progressive);
+  const params = getParams(level);
 
-  const [sequence, setSequence] = useState(() => generateSequence(sequenceLength));
+  const [sequence, setSequence] = useState(() => generateSequence(params.sequenceLength));
   const [phase, setPhase] = useState<'watch' | 'replay' | 'feedback'>('watch');
   const [playbackIndex, setPlaybackIndex] = useState(-1);
   const [userSequence, setUserSequence] = useState<number[]>([]);
@@ -35,7 +37,6 @@ export function SpatialSequence({ difficulty, onComplete, timeUp }: ExerciseProp
   const intervalRef = useRef<ReturnType<typeof setInterval>>(undefined);
   const completedRef = useRef(false);
 
-  // Playback animation
   useEffect(() => {
     if (phase !== 'watch') return;
     let idx = 0;
@@ -53,23 +54,22 @@ export function SpatialSequence({ difficulty, onComplete, timeUp }: ExerciseProp
     return () => clearInterval(intervalRef.current);
   }, [phase, sequence, round]);
 
-  // Finalize when timeUp
   useEffect(() => {
     if (timeUp && !completedRef.current && phase !== 'replay') {
       completedRef.current = true;
       const acc = totalAttempted > 0 ? totalCorrect / totalAttempted : 0;
       onComplete({
         exerciseId: 'spatial-sequence',
-        difficulty,
+        difficulty: level,
         correct: totalCorrect,
         total: totalAttempted,
         accuracy: acc,
-        score: normalizeScore(totalCorrect, totalAttempted, difficulty),
+        score: normalizeScore(totalCorrect, totalAttempted, level),
         durationMs: Date.now() - startTime,
         rounds: round,
       });
     }
-  }, [timeUp, phase, totalCorrect, totalAttempted, round, difficulty, onComplete, startTime]);
+  }, [timeUp, phase, totalCorrect, totalAttempted, round, level, onComplete, startTime]);
 
   const tapCell = useCallback(
     (index: number) => {
@@ -87,22 +87,20 @@ export function SpatialSequence({ difficulty, onComplete, timeUp }: ExerciseProp
         setTotalCorrect((c) => c + correct);
         setTotalAttempted((t) => t + sequence.length);
         setLastWrong(!passed);
+        onRoundEnd(passed);
         setPhase('feedback');
 
         setTimeout(() => {
           if (timeUp) return;
           setUserSequence([]);
-          if (passed) {
-            setSequence(generateSequence(sequenceLength));
-            setRound((r) => r + 1);
-          } else {
-            setSequence(generateSequence(sequenceLength));
-          }
+          const nextParams = getParams(progressive ? (passed ? Math.min(level + 1, 10) : Math.max(level - 1, 1)) : level);
+          setSequence(generateSequence(nextParams.sequenceLength));
+          if (passed) setRound((r) => r + 1);
           setPhase('watch');
         }, 1200);
       }
     },
-    [phase, userSequence, sequence, sequenceLength, timeUp],
+    [phase, userSequence, sequence, level, timeUp, onRoundEnd, progressive],
   );
 
   const cellSize = 72;
@@ -112,6 +110,7 @@ export function SpatialSequence({ difficulty, onComplete, timeUp }: ExerciseProp
       <div className="flex items-center gap-4 text-sm text-text-muted">
         <span>Round {round}</span>
         <span>{totalCorrect}/{totalAttempted} correct</span>
+        {progressive && <span className="text-primary font-semibold">Lv {level}</span>}
         {lastWrong && phase === 'watch' && <span className="text-warning">Retry!</span>}
       </div>
 
@@ -123,35 +122,23 @@ export function SpatialSequence({ difficulty, onComplete, timeUp }: ExerciseProp
             : lastWrong ? 'Try again...' : 'Nice! Next round...'}
       </p>
 
-      <div
-        className="grid gap-3 mx-auto"
-        style={{ gridTemplateColumns: `repeat(${GRID_SIZE}, ${cellSize}px)` }}
-      >
+      <div className="grid gap-3 mx-auto" style={{ gridTemplateColumns: `repeat(${GRID_SIZE}, ${cellSize}px)` }}>
         {Array.from({ length: TOTAL_CELLS }, (_, i) => {
           const isActive = phase === 'watch' && playbackIndex === i;
           const isUserTapped = phase === 'replay' && userSequence.includes(i);
           const lastTapped = userSequence[userSequence.length - 1] === i;
-
           let bg = 'bg-bg-card border-2 border-border';
           if (isActive) bg = 'bg-primary';
           else if (lastTapped) bg = 'bg-primary/70';
           else if (isUserTapped) bg = 'bg-primary/30';
-
           if (phase === 'feedback') {
             const inSeq = sequence.includes(i);
             const inUser = userSequence.includes(i);
             if (inSeq && inUser) bg = 'bg-accent';
             else if (inSeq) bg = 'bg-danger/50';
           }
-
           return (
-            <button
-              key={i}
-              className={`${bg} rounded-xl transition-colors duration-200 active:scale-95`}
-              style={{ width: cellSize, height: cellSize }}
-              onClick={() => tapCell(i)}
-              disabled={phase !== 'replay'}
-            />
+            <button key={i} className={`${bg} rounded-xl transition-colors duration-200 active:scale-95`} style={{ width: cellSize, height: cellSize }} onClick={() => tapCell(i)} disabled={phase !== 'replay'} />
           );
         })}
       </div>

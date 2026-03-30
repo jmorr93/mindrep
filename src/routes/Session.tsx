@@ -13,7 +13,7 @@ export function Session() {
   const navigate = useNavigate();
   const { exercises, currentIndex, results, phase, addResult, nextExercise, reset } =
     useSessionStore();
-  const { saveSession, getDifficulty } = useProgressStore();
+  const { saveSession, getDifficulty, tier } = useProgressStore();
 
   // Redirect if no session started
   useEffect(() => {
@@ -68,6 +68,7 @@ export function Session() {
         icon={descriptor.icon}
         difficulty={difficulty}
         timeLimit={EXERCISE_TIME}
+        progressive={tier === 'progressive'}
         ExerciseComponent={descriptor.component}
         onComplete={handleExerciseComplete}
       />

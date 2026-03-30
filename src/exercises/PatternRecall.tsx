@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { Grid } from '../components/Grid';
 import { normalizeScore } from '../lib/scoring';
 import { lerp } from '../lib/utils';
+import { useProgressiveDifficulty } from '../hooks/useProgressiveDifficulty';
 import type { ExerciseProps } from './types';
 
 function getParams(difficulty: number) {
@@ -21,10 +22,11 @@ function generatePattern(size: number, cells: number): Set<number> {
   return indices;
 }
 
-export function PatternRecall({ difficulty, onComplete, timeUp }: ExerciseProps) {
-  const { size, cells, viewTime } = getParams(difficulty);
+export function PatternRecall({ difficulty, onComplete, timeUp, progressive }: ExerciseProps) {
+  const { level, onRoundEnd } = useProgressiveDifficulty(difficulty, progressive);
+  const params = getParams(level);
 
-  const [highlighted, setHighlighted] = useState<Set<number>>(() => generatePattern(size, cells));
+  const [highlighted, setHighlighted] = useState<Set<number>>(() => generatePattern(params.size, params.cells));
   const [phase, setPhase] = useState<'memorize' | 'recall' | 'feedback'>('memorize');
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [round, setRound] = useState(1);
@@ -33,31 +35,32 @@ export function PatternRecall({ difficulty, onComplete, timeUp }: ExerciseProps)
   const [lastWrong, setLastWrong] = useState(false);
   const [startTime] = useState(Date.now());
   const completedRef = useRef(false);
+  const currentParamsRef = useRef(params);
+  currentParamsRef.current = params;
 
   // Memorize timer
   useEffect(() => {
     if (phase !== 'memorize') return;
-    const id = setTimeout(() => setPhase('recall'), viewTime * 1000);
+    const id = setTimeout(() => setPhase('recall'), currentParamsRef.current.viewTime * 1000);
     return () => clearTimeout(id);
-  }, [phase, viewTime, round]);
+  }, [phase, round]);
 
-  // When timeUp becomes true during feedback or between rounds, finalize
   useEffect(() => {
     if (timeUp && !completedRef.current && phase !== 'recall') {
       completedRef.current = true;
       const acc = totalAttempted > 0 ? totalCorrect / totalAttempted : 0;
       onComplete({
         exerciseId: 'pattern-recall',
-        difficulty,
+        difficulty: level,
         correct: totalCorrect,
         total: totalAttempted,
         accuracy: acc,
-        score: normalizeScore(totalCorrect, totalAttempted, difficulty),
+        score: normalizeScore(totalCorrect, totalAttempted, level),
         durationMs: Date.now() - startTime,
         rounds: round,
       });
     }
-  }, [timeUp, phase, totalCorrect, totalAttempted, round, difficulty, onComplete, startTime]);
+  }, [timeUp, phase, totalCorrect, totalAttempted, round, level, onComplete, startTime]);
 
   const toggleCell = useCallback((index: number) => {
     setSelected((prev) => {
@@ -69,40 +72,36 @@ export function PatternRecall({ difficulty, onComplete, timeUp }: ExerciseProps)
   }, []);
 
   const submit = useCallback(() => {
+    const p = currentParamsRef.current;
     const correct = [...highlighted].filter((i) => selected.has(i)).length;
     const extra = [...selected].filter((i) => !highlighted.has(i)).length;
     const adjustedCorrect = Math.max(0, correct - extra);
-    const passed = adjustedCorrect / cells >= 0.7;
+    const passed = adjustedCorrect / p.cells >= 0.7;
 
     setTotalCorrect((c) => c + adjustedCorrect);
-    setTotalAttempted((t) => t + cells);
+    setTotalAttempted((t) => t + p.cells);
     setLastWrong(!passed);
+    onRoundEnd(passed);
     setPhase('feedback');
 
     setTimeout(() => {
-      if (timeUp) return; // will be caught by effect
-
-      // If wrong, retry with similar pattern (same params); if right, new round
+      if (timeUp) return;
       setSelected(new Set());
-      if (passed) {
-        setHighlighted(generatePattern(size, cells));
-        setRound((r) => r + 1);
-      } else {
-        // Retry: new pattern but same difficulty
-        setHighlighted(generatePattern(size, cells));
-      }
+      // getParams will use updated level from progressive hook on next render
+      const nextParams = getParams(progressive ? (passed ? Math.min(level + 1, 10) : Math.max(level - 1, 1)) : level);
+      setHighlighted(generatePattern(nextParams.size, nextParams.cells));
+      if (passed) setRound((r) => r + 1);
       setPhase('memorize');
     }, 1200);
-  }, [highlighted, selected, cells, size, timeUp]);
+  }, [highlighted, selected, level, timeUp, onRoundEnd, progressive]);
 
   return (
     <div className="flex flex-col items-center gap-4">
       <div className="flex items-center gap-4 text-sm text-text-muted">
         <span>Round {round}</span>
         <span>{totalCorrect}/{totalAttempted} correct</span>
-        {lastWrong && phase === 'memorize' && (
-          <span className="text-warning">Retry!</span>
-        )}
+        {progressive && <span className="text-primary font-semibold">Lv {level}</span>}
+        {lastWrong && phase === 'memorize' && <span className="text-warning">Retry!</span>}
       </div>
 
       {phase === 'feedback' ? (
@@ -110,7 +109,7 @@ export function PatternRecall({ difficulty, onComplete, timeUp }: ExerciseProps)
           <p className="text-sm text-text-muted">
             {lastWrong ? 'Try again with a new pattern...' : 'Nice! Next round...'}
           </p>
-          <Grid rows={size} cols={size} highlighted={highlighted} userSelected={selected} mode="result" />
+          <Grid rows={params.size} cols={params.size} highlighted={highlighted} userSelected={selected} mode="result" />
         </div>
       ) : (
         <>
@@ -118,8 +117,8 @@ export function PatternRecall({ difficulty, onComplete, timeUp }: ExerciseProps)
             {phase === 'memorize' ? 'Memorize the pattern...' : 'Tap to recreate the pattern'}
           </p>
           <Grid
-            rows={size}
-            cols={size}
+            rows={params.size}
+            cols={params.size}
             highlighted={highlighted}
             userSelected={selected}
             mode={phase === 'memorize' ? 'display' : 'input'}

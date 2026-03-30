@@ -11,6 +11,7 @@ const TIERS: { value: Tier; color: string; desc: string }[] = [
   { value: 'easy', color: 'bg-primary-light', desc: 'Gentle start' },
   { value: 'medium', color: 'bg-primary', desc: 'Real challenge' },
   { value: 'hard', color: 'bg-[#8B0000]', desc: 'Push your limits' },
+  { value: 'progressive', color: 'bg-gradient-to-r from-primary-light to-[#8B0000]', desc: 'Ramps up as you go' },
 ];
 
 export function Home() {
@@ -41,7 +42,7 @@ export function Home() {
       <div className="w-full max-w-xs">
         <p className="text-sm text-text-muted mb-2">Difficulty level:</p>
         <div className="grid grid-cols-3 gap-2">
-          {TIERS.map((t) => {
+          {TIERS.slice(0, 3).map((t) => {
             const isActive = tier === t.value;
             const range = TIER_RANGES[t.value];
             return (
@@ -62,6 +63,26 @@ export function Home() {
             );
           })}
         </div>
+        {(() => {
+          const t = TIERS[3];
+          const isActive = tier === t.value;
+          const range = TIER_RANGES[t.value];
+          return (
+            <button
+              onClick={() => setTier(t.value)}
+              className={`w-full rounded-xl py-3 px-4 text-center transition-all mt-2 ${
+                isActive
+                  ? `${t.color} text-white font-bold scale-[1.01]`
+                  : 'bg-bg-card border border-border text-text-muted hover:bg-bg-card-hover'
+              }`}
+            >
+              <p className="text-sm font-semibold">{range.label}</p>
+              <p className={`text-xs mt-0.5 ${isActive ? 'text-white/70' : 'text-text-muted'}`}>
+                {t.desc}
+              </p>
+            </button>
+          );
+        })()}
       </div>
 
       <div className="w-full max-w-xs space-y-3">

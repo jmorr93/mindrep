@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { normalizeScore } from '../lib/scoring';
 import { randomInt, lerp } from '../lib/utils';
+import { useProgressiveDifficulty } from '../hooks/useProgressiveDifficulty';
 import type { ExerciseProps } from './types';
 
 type Op = '+' | '−';
@@ -31,8 +32,10 @@ function generateChain(difficulty: number): Problem[] {
   return problems;
 }
 
-export function MentalMath({ difficulty, onComplete, timeUp }: ExerciseProps) {
-  const [chain, setChain] = useState(() => generateChain(difficulty));
+export function MentalMath({ difficulty, onComplete, timeUp, progressive }: ExerciseProps) {
+  const { level, onRoundEnd } = useProgressiveDifficulty(difficulty, progressive);
+
+  const [chain, setChain] = useState(() => generateChain(level));
   const [step, setStep] = useState(1);
   const [userAnswer, setUserAnswer] = useState('');
   const [totalCorrect, setTotalCorrect] = useState(0);
@@ -43,23 +46,22 @@ export function MentalMath({ difficulty, onComplete, timeUp }: ExerciseProps) {
   const [startTime] = useState(Date.now());
   const completedRef = useRef(false);
 
-  // Finalize when timeUp and not mid-feedback
   useEffect(() => {
     if (timeUp && !completedRef.current && feedback === null) {
       completedRef.current = true;
       const acc = totalAttempted > 0 ? totalCorrect / totalAttempted : 0;
       onComplete({
         exerciseId: 'mental-math',
-        difficulty,
+        difficulty: level,
         correct: totalCorrect,
         total: totalAttempted,
         accuracy: acc,
-        score: normalizeScore(totalCorrect, totalAttempted, difficulty),
+        score: normalizeScore(totalCorrect, totalAttempted, level),
         durationMs: Date.now() - startTime,
         rounds: round,
       });
     }
-  }, [timeUp, feedback, totalCorrect, totalAttempted, round, difficulty, onComplete, startTime]);
+  }, [timeUp, feedback, totalCorrect, totalAttempted, round, level, onComplete, startTime]);
 
   const submit = useCallback(() => {
     const num = parseInt(userAnswer, 10);
@@ -72,20 +74,17 @@ export function MentalMath({ difficulty, onComplete, timeUp }: ExerciseProps) {
     setTimeout(() => {
       setFeedback(null);
       setUserAnswer('');
-
       if (timeUp) return;
 
       if (step + 1 >= chain.length) {
-        // Chain complete — start new chain
+        onRoundEnd(isCorrect);
+        const nextLevel = progressive ? (isCorrect ? Math.min(level + 1, 10) : Math.max(level - 1, 1)) : level;
+        setChain(generateChain(nextLevel));
+        setStep(1);
         if (isCorrect) {
-          setChain(generateChain(difficulty));
-          setStep(1);
           setRound((r) => r + 1);
           setLastWrong(false);
         } else {
-          // Failed this chain, retry with new chain same difficulty
-          setChain(generateChain(difficulty));
-          setStep(1);
           setLastWrong(true);
         }
       } else {
@@ -93,23 +92,20 @@ export function MentalMath({ difficulty, onComplete, timeUp }: ExerciseProps) {
           setStep((s) => s + 1);
           setLastWrong(false);
         } else {
-          // Wrong answer mid-chain — restart chain with new numbers
-          setChain(generateChain(difficulty));
+          onRoundEnd(false);
+          const nextLevel = progressive ? Math.max(level - 1, 1) : level;
+          setChain(generateChain(nextLevel));
           setStep(1);
           setLastWrong(true);
         }
       }
     }, 800);
-  }, [userAnswer, chain, step, difficulty, timeUp]);
+  }, [userAnswer, chain, step, level, timeUp, onRoundEnd, progressive]);
 
   const handleKey = useCallback((d: string) => {
-    if (d === 'del') {
-      setUserAnswer((s) => s.slice(0, -1));
-    } else if (d === '-') {
-      setUserAnswer((s) => (s.startsWith('-') ? s.slice(1) : '-' + s));
-    } else {
-      setUserAnswer((s) => s + d);
-    }
+    if (d === 'del') setUserAnswer((s) => s.slice(0, -1));
+    else if (d === '-') setUserAnswer((s) => (s.startsWith('-') ? s.slice(1) : '-' + s));
+    else setUserAnswer((s) => s + d);
   }, []);
 
   return (
@@ -117,12 +113,11 @@ export function MentalMath({ difficulty, onComplete, timeUp }: ExerciseProps) {
       <div className="flex items-center gap-4 text-sm text-text-muted">
         <span>Round {round}</span>
         <span>{totalCorrect}/{totalAttempted} correct</span>
+        {progressive && <span className="text-primary font-semibold">Lv {level}</span>}
         {lastWrong && <span className="text-warning">Retry!</span>}
       </div>
 
-      <p className="text-text-muted text-sm">
-        Keep a running total — what's the result?
-      </p>
+      <p className="text-text-muted text-sm">Keep a running total — what's the result?</p>
 
       <div className="bg-bg-card border border-border rounded-xl p-6 min-w-[200px] text-center shadow-sm">
         <p className="text-text-muted text-sm mb-1">{chain[0].display}</p>
@@ -133,38 +128,19 @@ export function MentalMath({ difficulty, onComplete, timeUp }: ExerciseProps) {
 
       <p className="text-text-muted text-sm">= ?</p>
 
-      <div
-        className={`text-4xl font-bold min-h-[56px] px-4 py-2 rounded-xl min-w-[120px] text-center transition-colors ${
-          feedback === 'correct'
-            ? 'bg-accent/20 text-accent'
-            : feedback === 'wrong'
-              ? 'bg-danger/20 text-danger'
-              : 'bg-bg-card border border-border'
-        }`}
-      >
+      <div className={`text-4xl font-bold min-h-[56px] px-4 py-2 rounded-xl min-w-[120px] text-center transition-colors ${feedback === 'correct' ? 'bg-accent/20 text-accent' : feedback === 'wrong' ? 'bg-danger/20 text-danger' : 'bg-bg-card border border-border'}`}>
         {feedback === 'correct' ? '✓' : feedback === 'wrong' ? `${chain[step].answer}` : userAnswer || '–'}
       </div>
 
       <div className="grid grid-cols-4 gap-2">
         {['1', '2', '3', '-', '4', '5', '6', 'del', '7', '8', '9', '0'].map((d) => (
-          <button
-            key={d}
-            onClick={() => handleKey(d)}
-            disabled={feedback !== null}
-            className="w-14 h-14 bg-bg-card border border-border rounded-xl text-lg font-bold active:scale-95 transition-all disabled:opacity-30"
-          >
+          <button key={d} onClick={() => handleKey(d)} disabled={feedback !== null} className="w-14 h-14 bg-bg-card border border-border rounded-xl text-lg font-bold active:scale-95 transition-all disabled:opacity-30">
             {d === 'del' ? '⌫' : d === '-' ? '±' : d}
           </button>
         ))}
       </div>
 
-      <button
-        onClick={submit}
-        disabled={userAnswer === '' || feedback !== null}
-        className="px-8 py-3 rounded-xl bg-primary text-white font-bold active:scale-95 transition-transform disabled:opacity-30"
-      >
-        Submit
-      </button>
+      <button onClick={submit} disabled={userAnswer === '' || feedback !== null} className="px-8 py-3 rounded-xl bg-primary text-white font-bold active:scale-95 transition-transform disabled:opacity-30">Submit</button>
     </div>
   );
 }

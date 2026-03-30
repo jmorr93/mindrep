@@ -10,6 +10,7 @@ interface ExerciseShellProps {
   icon: string;
   difficulty: number;
   timeLimit: number;
+  progressive: boolean;
   ExerciseComponent: ComponentType<ExerciseProps>;
   onComplete: (result: ExerciseResult) => void;
 }
@@ -22,6 +23,7 @@ export function ExerciseShell({
   icon,
   difficulty,
   timeLimit,
+  progressive,
   ExerciseComponent,
   onComplete,
 }: ExerciseShellProps) {
@@ -66,7 +68,9 @@ export function ExerciseShell({
         <span className="text-6xl">{icon}</span>
         <h2 className="text-2xl font-bold">{name}</h2>
         <p className="text-text-muted text-center max-w-sm">{description}</p>
-        <p className="text-text-muted text-sm">Level {difficulty}</p>
+        <p className="text-text-muted text-sm">
+          {progressive ? 'Progressive mode — starts easy, gets harder' : `Level ${difficulty}`}
+        </p>
         <div className="text-6xl font-bold text-primary">
           {instructionCount > 0 ? instructionCount : 'Go!'}
         </div>
@@ -91,6 +95,7 @@ export function ExerciseShell({
         onComplete={handleComplete}
         timeLimit={timeLimit}
         timeUp={timeUp}
+        progressive={progressive}
       />
     </div>
   );
